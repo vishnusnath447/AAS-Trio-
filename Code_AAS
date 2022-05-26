@@ -1,0 +1,222 @@
+*/
+#include <TinyGPS++.h>
+#include <Arduino.h>
+#include <SoftwareSerial.h>
+#if defined(ESP32)
+  #include <WiFi.h>
+#elif defined(ESP8266)
+  #include <ESP8266WiFi.h>
+#endif
+#include <Firebase_ESP_Client.h>
+//...................................................................................
+TinyGPSPlus gps;  // The TinyGPS++ object
+
+SoftwareSerial ss(4, 5); // The serial connection to the GPS device
+
+float latitude , longitude;
+int year , month , date, hour , minute , second;
+String date_str , time_str , lat_str , lng_str;
+int pm;
+
+//..................................................................................
+//Provide the token generation process info.
+#include "addons/TokenHelper.h"
+//Provide the RTDB payload printing info and other helper functions.
+#include "addons/RTDBHelper.h"
+
+// Insert your network credentials
+#define WIFI_SSID "AndroidAP0958"
+#define WIFI_PASSWORD "ncuj5270"
+
+// Insert Firebase project API Key
+#define API_KEY "AIzaSyCamMZzBdByohzWrkAmN4YPYweMCrwy9_E"
+
+// Insert RTDB URLefine the RTDB URL */
+#define DATABASE_URL "https://trioacc-2531f-default-rtdb.asia-southeast1.firebasedatabase.app/" 
+
+//Define Firebase Data object
+FirebaseData fbdo;
+
+FirebaseAuth auth;
+FirebaseConfig config;
+
+unsigned long sendDataPrevMillis = 0;
+int count = 0;
+bool signupOK = false;
+
+const int PIEZO_PIN = A0; // Piezo output
+int LED = 0; // Assign LED pin i.e: D3 on NodeMCU
+
+void setup(){
+  Serial.begin(115200);
+  ss.begin(9600);
+  pinMode(LED, OUTPUT);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED){
+    Serial.print(".");
+    delay(300);
+  }
+  Serial.println();
+  Serial.print("Connected with IP: ");
+  Serial.println(WiFi.localIP());
+  Serial.println();
+
+  /* Assign the api key (required) */
+  config.api_key = API_KEY;
+
+  /* Assign the RTDB URL (required) */
+  config.database_url = DATABASE_URL;
+
+  /* Sign up */
+  if (Firebase.signUp(&config, &auth, "", "")){
+    Serial.println("ok");
+    signupOK = true;
+  }
+  else{
+    Serial.printf("%s\n", config.signer.signupError.message.c_str());
+  }
+
+  /* Assign the callback function for the long running token generation task */
+  config.token_status_callback = tokenStatusCallback; //see addons/TokenHelper.h
+  
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+}
+
+void loop(){
+
+  //........................................................................................................................
+
+  int piezoADC = analogRead(PIEZO_PIN);
+  float piezoV = piezoADC / 1023.0 * 5.0;
+  
+  if (Firebase.ready() && signupOK ) //&& (millis() - sendDataPrevMillis > 15000 || sendDataPrevMillis == 0))
+  {
+
+    //............................................................................
+    while (ss.available() > 0)
+    if (gps.encode(ss.read()))
+    {
+      if (gps.location.isValid())
+      {
+        latitude = gps.location.lat();
+        lat_str = String(latitude , 6);
+        longitude = gps.location.lng();
+        lng_str = String(longitude , 6);
+      }
+   /*   
+      if (gps.date.isValid())
+      {
+        date_str = "";
+        date = gps.date.day();
+        month = gps.date.month();
+        year = gps.date.year();
+
+        if (date < 10)
+          date_str = '0';
+        date_str += String(date);
+
+        date_str += " / ";
+
+        if (month < 10)
+          date_str += '0';
+        date_str += String(month);
+
+        date_str += " / ";
+
+        if (year < 10)
+          date_str += '0';
+        date_str += String(year);
+      }
+
+      if (gps.time.isValid())
+      {
+        time_str = "";
+        hour = gps.time.hour();
+        minute = gps.time.minute();
+        second = gps.time.second();
+
+        minute = (minute + 30);
+        if (minute > 59)
+        {
+          minute = minute - 60;
+          hour = hour + 1;
+        }
+        hour = (hour + 5) ;
+        if (hour > 23)
+          hour = hour - 24;
+
+        if (hour >= 12)
+          pm = 1;
+        else
+          pm = 0;
+
+        hour = hour % 12;
+
+        if (hour < 10)
+          time_str = '0';
+        time_str += String(hour);
+
+        time_str += " : ";
+
+        if (minute < 10)
+          time_str += '0';
+        time_str += String(minute);
+
+        time_str += " : ";
+
+        if (second < 10)
+          time_str += '0';
+        time_str += String(second);
+
+        if (pm == 1)
+          time_str += " PM ";
+        else
+          time_str += " AM ";
+
+      }
+      */
+    }
+    //...........................................................................
+    if(piezoV>=0.20)
+    {
+      
+      Firebase.RTDB.setFloat(&fbdo, "test/CrashValue", piezoV);
+      Firebase.RTDB.setDouble(&fbdo, "test/Lat", latitude);
+      Serial.println(latitude);
+      Firebase.RTDB.setDouble(&fbdo, "test/Lng", longitude);
+      Firebase.RTDB.setInt(&fbdo, "Flag", 1);
+      digitalWrite(LED, HIGH); // turn the LED on
+      delay(2000); // wait for a second
+      digitalWrite(LED,LOW);
+    }
+  }
+  /*
+  if (Firebase.ready() && signupOK && (millis() - sendDataPrevMillis > 15000 || sendDataPrevMillis == 0)){
+    sendDataPrevMillis = millis();
+    // Write an Int number on the database path test/int
+    if (Firebase.RTDB.setInt(&fbdo, "test/int", count)){
+      Serial.println("PASSED");
+      Serial.println("PATH: " + fbdo.dataPath());
+      Serial.println("TYPE: " + fbdo.dataType());
+    }
+    else {
+      Serial.println("FAILED");
+      Serial.println("REASON: " + fbdo.errorReason());
+    }
+    count++;
+    
+    // Write an Float number on the database path test/float
+    if (Firebase.RTDB.setFloat(&fbdo, "test/float", 0.01 + random(0,100))){
+      Serial.println("PASSED");
+      Serial.println("PATH: " + fbdo.dataPath());
+      Serial.println("TYPE: " + fbdo.dataType());
+    }
+    else {
+      Serial.println("FAILED");
+      Serial.println("REASON: " + fbdo.errorReason());
+    }
+  }
+  */
+}
